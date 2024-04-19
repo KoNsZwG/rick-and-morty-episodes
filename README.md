@@ -1,4 +1,4 @@
-# test-series-project
+# Rick-And-Morty-Episodes
 
 This template should help get you started developing with Vue 3 in Vite.
 
