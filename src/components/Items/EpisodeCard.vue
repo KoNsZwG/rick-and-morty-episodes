@@ -86,7 +86,7 @@ defineEmits(['openDetail'])
       <p class="text-sm text-slate-400">{{ episode.episode }} · {{ episode.air_date }}</p>
 
       <!-- NEW: Interactive Status Pill & Dropdown Menu -->
-      <div class="absolute -top-5 right-3">
+      <div class="absolute z-20 -top-5 right-3">
         <div class="relative">
           <!-- The Status Pill Button -->
           <button
