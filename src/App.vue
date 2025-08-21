@@ -1,9 +1,11 @@
+<script setup lang="ts">
+import NavBar from '@/components/Header/NavBar.vue'
+import { RouterView } from 'vue-router'
+</script>
+
 <template>
-  <div id="app">
-    <episode-list />
+  <div class="bg-slate-900 min-h-screen">
+    <NavBar />
+    <RouterView />
   </div>
 </template>
-<script setup lang="ts">
-import EpisodeList from './components/EpisodeList.vue'
-</script>
-<style scoped></style>

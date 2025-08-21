@@ -1,156 +1,154 @@
+// src/stores/episodeStore.ts
+
 import { ref, computed } from 'vue'
 import axios from 'axios'
+import { defineStore } from 'pinia'
 import { EpisodeStatus } from '@/interfaces'
 import type { IEpisode, IApiResponse, IEpisodeCharacterResponse } from '@/interfaces'
-import { defineStore } from 'pinia'
-import { setEpisodeToLocalStorage } from '@/helpers'
 
 export const useEpisodeStore = defineStore('episode', () => {
+  // =================================================================
+  // ===== STATE (The single source of truth for your app's data) =====
+  // =================================================================
   const episodes = ref<IEpisode[]>([])
   const currentPage = ref(1)
   const totalPages = ref(0)
+  const nextPageUrl = ref<string | null>(null)
   const isLoading = ref(false)
   const isLoadingMore = ref(false)
-  const nextPageUrl = ref('')
-  const currentFilter = ref('all')
+  const currentFilter = ref<EpisodeStatus | 'all'>('all')
 
-  const setFilter = (filter: EpisodeStatus | 'all') => {
-    currentFilter.value = filter
-  }
-
+  // =================================================================
+  // ===== GETTERS (Computed properties for your state) =============
+  // =================================================================
   const filteredEpisodes = computed(() => {
-    switch (currentFilter.value) {
-      case 'watched':
-        return episodes.value.filter((episode) => episode.status === 'watched')
-      case 'unwatched':
-        return episodes.value.filter((episode) => episode.status === 'unwatched')
-      case 'watching':
-        return episodes.value.filter((episode) => episode.status === 'watching')
-      default:
-        return episodes.value
+    if (currentFilter.value === 'all') {
+      return episodes.value
     }
+    return episodes.value.filter((episode) => episode.status === currentFilter.value)
   })
 
+  // =================================================================
+  // ===== HELPER FUNCTIONS (Internal logic for the store) =========
+  // =================================================================
   const generateRandomNumber = (arr: string[]): number => {
     const randomIndex = Math.floor(Math.random() * arr.length)
-
     return arr.length === 0 ? 0 : randomIndex
   }
 
+  const fetchRandomCharacterImage = async (characters: string[]): Promise<string> => {
+    // Edge case: If an episode has no characters, return a placeholder
+    if (characters.length === 0) {
+      // You can replace this with a local asset path if you have one
+      return 'https://rickandmortyapi.com/api/character/avatar/19.jpeg' // Default to Mr. Poopybutthole
+    }
+    const randomNumber = generateRandomNumber(characters)
+    const characterResponse = await axios.get<IEpisodeCharacterResponse>(characters[randomNumber])
+    return characterResponse.data.image
+  }
+
+  // =================================================================
+  // ===== ACTIONS (Functions that change the state) ================
+  // =================================================================
   const fetchEpisodes = async () => {
+    // Don't fetch if we are already loading
+    if (isLoading.value) return
+
     try {
       isLoading.value = true
+      // 1. Get raw episode data from the API
       const response = await axios.get<IApiResponse>(
         `https://rickandmortyapi.com/api/episode?page=${currentPage.value}`
       )
+      const apiEpisodes = response.data.results
 
-      // Getting episodes from local storage and setting them after convering to object.
-      const episodesStorage: IEpisode[] = JSON.parse(localStorage.getItem('episodes') || '[]')
+      // 2. Get saved user data from local storage
+      const storedEpisodes: { id: number; status: EpisodeStatus; isFavorite: boolean }[] =
+        JSON.parse(localStorage.getItem('episodes') || '[]')
 
-      episodes.value = await fetchNormalizedEpisodes(response.data, episodesStorage)
+      // 3. Merge API data with stored user data
+      const mergedEpisodes = await Promise.all(
+        apiEpisodes.map(async (apiEpisode) => {
+          const storedData = storedEpisodes.find((s) => s.id === apiEpisode.id)
+          const characterImage = await fetchRandomCharacterImage(apiEpisode.characters)
+
+          return {
+            ...apiEpisode,
+            characterImage,
+            status: storedData?.status || EpisodeStatus.Unwatched,
+            isFavorite: storedData?.isFavorite || false
+          }
+        })
+      )
+
+      // 4. Append new episodes to the existing list (for infinite scroll)
+      episodes.value = [...episodes.value, ...mergedEpisodes]
 
       totalPages.value = response.data.info.pages
-      nextPageUrl.value = response.data.info.next || ''
+      nextPageUrl.value = response.data.info.next
     } catch (error) {
       console.error('Error fetching episodes:', error)
-      console.error('Error:', error)
     } finally {
       isLoading.value = false
     }
   }
 
-  const fetchNormalizedEpisodes = async (
-    responseData: IApiResponse,
-    episodeStorage?: IEpisode[]
-  ): Promise<IEpisode[]> => {
-    return await Promise.all(
-      responseData.results.map(async (apiEpisode) => {
-        let storedEpisode: IEpisode | undefined
-        if (episodeStorage) {
-          storedEpisode = episodeStorage.find((storedEpisode) => storedEpisode.id === apiEpisode.id)
-        } else {
-          storedEpisode = episodes.value.find((storedEpisode) => storedEpisode.id === apiEpisode.id)
-        }
-
-        const characterImage = await fetchRandomCharacterImage(apiEpisode.characters)
-        if (storedEpisode) {
-          return {
-            ...apiEpisode,
-            isFavorite: storedEpisode.isFavorite,
-            status: storedEpisode.status,
-            characterImage
-          }
-        } else {
-          return {
-            ...apiEpisode,
-            isFavorite: false,
-            status: EpisodeStatus.Unwatched,
-            characterImage
-          }
-        }
-      })
-    )
+  const fetchInitialEpisodes = async () => {
+    // Reset state for a fresh load or filter change
+    console.log('fetchInitialEpisodes action has been called!')
+    episodes.value = []
+    currentPage.value = 1
+    await fetchEpisodes()
   }
 
   const fetchNextPage = async () => {
-    if (!nextPageUrl.value) return
+    if (!nextPageUrl.value || isLoadingMore.value) return
 
-    try {
-      isLoadingMore.value = true
-      const response = await axios.get<IApiResponse>(nextPageUrl.value)
-      const newEpisodes: IEpisode[] = await fetchNormalizedEpisodes(response.data)
+    isLoadingMore.value = true
+    currentPage.value++ // Increment the page before fetching
+    await fetchEpisodes() // Re-use the main fetch logic
+    isLoadingMore.value = false
+  }
 
-      episodes.value = [...episodes.value, ...newEpisodes]
-      currentPage.value++
-      totalPages.value = response.data.info.pages
-      nextPageUrl.value = response.data.info.next || ''
-      isLoadingMore.value = false
-    } catch (error) {
-      console.error('Error:', error)
-      isLoadingMore.value = false
+  const setFilter = (filter: EpisodeStatus | 'all') => {
+    currentFilter.value = filter
+  }
+
+  const updateEpisodeStatus = (episodeId: number, status: EpisodeStatus) => {
+    const episode = episodes.value.find((ep) => ep.id === episodeId)
+    if (episode) {
+      episode.status = status
+      // The Pinia plugin handles saving automatically!
     }
   }
 
-  const fetchRandomCharacterImage = async (characters: string[]): Promise<string> => {
-    const randomNumber = generateRandomNumber(characters)
-    const characterResponse = await axios.get<IEpisodeCharacterResponse>(characters[randomNumber])
-
-    return characterResponse.data.image
+  const updateToggleFavorite = (episodeId: number) => {
+    const episode = episodes.value.find((ep) => ep.id === episodeId)
+    if (episode) {
+      episode.isFavorite = !episode.isFavorite
+      // The Pinia plugin handles saving automatically!
+    }
   }
 
-  const updateEpisode = (episode: IEpisode, status: EpisodeStatus, toggleFavorite: boolean) => {
-    setEpisodeToLocalStorage(episode, status, toggleFavorite)
-  }
-
-  const updateEpisodeStatus = (episode: IEpisode, status: EpisodeStatus) => {
-    const updatedEpisode = { ...episode, status }
-    const updatedEpisodes = episodes.value.map((ep) => (ep.id === episode.id ? updatedEpisode : ep))
-    episodes.value = updatedEpisodes
-    setEpisodeToLocalStorage(episode, status)
-  }
-
-  const updateToggleFavorite = (episode: IEpisode) => {
-    const updatedEpisode = { ...episode, isFavorite: !episode.isFavorite }
-    const updatedEpisodes = episodes.value.map((ep) => (ep.id === episode.id ? updatedEpisode : ep))
-
-    episodes.value = updatedEpisodes
-    setEpisodeToLocalStorage(episode, undefined, !episode.isFavorite)
-  }
-
+  // =================================================================
+  // ===== RETURN (Expose state and actions to components) =========
+  // =================================================================
   return {
+    // State
     episodes,
     currentPage,
     totalPages,
     isLoading,
     isLoadingMore,
+    currentFilter,
+    nextPageUrl,
+    // Getters
     filteredEpisodes,
-    fetchEpisodes,
+    // Actions
+    fetchInitialEpisodes,
     fetchNextPage,
-    updateEpisode,
     updateEpisodeStatus,
     updateToggleFavorite,
-    setFilter,
-    currentFilter,
-    nextPageUrl
+    setFilter
   }
 })
